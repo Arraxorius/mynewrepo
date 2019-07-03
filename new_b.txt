@@ -1,0 +1,489 @@
+#!/usr/bin/env python
+
+# Copyright 2017 Google Inc. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import tensorflow as tf
+
+tf.logging.set_verbosity(tf.logging.INFO)
+
+HEIGHT = 384
+WIDTH = 288
+NUM_CHANNELS = 3
+LABEL_CSV = "/content/gdrive/My Drive/Мої файли/datasets/cats/labels_csv.csv"
+KERNEL_LIST = [1,3,5,7,9]
+
+def work_out_labels(labels_csv, key):
+  labels = []
+  with open(labels_csv, "r") as file:
+    data = file.readlines()
+  for s in data:
+    s = s.replace(',\n', "")
+    s = s.split(",",1)
+    if s[0] == key:
+        labels = s[1].split(",")
+  return labels, len(labels)
+
+def linear_model(img, mode, hparams):
+
+  X = tf.reshape(img,[-1,HEIGHT*WIDTH*NUM_CHANNELS]) #flatten
+  _, NCLASSES = work_out_labels(LABEL_CSV, hparams['key'])
+  ylogits = tf.layers.dense(X,NCLASSES,activation=None)
+  return ylogits, NCLASSES
+
+def dnn_model(img, mode, hparams):
+  X = tf.reshape(img, [-1, HEIGHT*WIDTH*NUM_CHANNELS]) #flatten
+  _, NCLASSES = work_out_labels(LABEL_CSV, hparams['key'])
+  h1 = tf.layers.dense(X,1000, activation=tf.nn.relu)
+  h2 = tf.layers.dense(h1,300, activation=tf.nn.relu)
+  h3 = tf.layers.dense(h2,100, activation=tf.nn.relu)
+  h4 = tf.layers.dense(h3,30, activation=tf.nn.relu)
+  ylogits = tf.layers.dense(h4, NCLASSES, activation=None)
+  return ylogits, NCLASSES
+
+def dnn_dropout_model(img, mode, hparams):
+  dprob = hparams.get('dprob', 0.1)
+
+  X = tf.reshape(img, [-1, HEIGHT*WIDTH*NUM_CHANNELS]) #flatten
+  _, NCLASSES = work_out_labels(LABEL_CSV, hparams['key'])
+  h1 = tf.layers.dense(X,1000, activation=tf.nn.relu)
+  h2 = tf.layers.dense(h1,300, activation=tf.nn.relu)
+  h3 = tf.layers.dense(h2,100, activation=tf.nn.relu)
+  h4 = tf.layers.dense(h3,30, activation=tf.nn.relu)
+  h4d = tf.layers.dropout(h4, rate=dprob, training=(
+      mode == tf.estimator.ModeKeys.TRAIN)) #only dropout when training
+  ylogits = tf.layers.dense(h4d, NCLASSES, activation=None)
+  return ylogits, NCLASSES
+
+def cnn_model(img, mode, hparams):
+  ksize1 = hparams.get('ksize1', 5)
+  ksize2 = hparams.get('ksize2', 5)
+  nfil1 = hparams.get('nfil1', 10)
+  nfil2 = hparams.get('nfil2', 20)
+  dprob = hparams.get('dprob', 0.25)
+
+  _, NCLASSES = work_out_labels(LABEL_CSV, hparams['key'])
+  c1 = tf.layers.conv2d(img, filters=nfil1,
+                          kernel_size=ksize1, strides=1,
+                          padding='same', activation=tf.nn.relu)
+  p1 = tf.layers.max_pooling2d(c1,pool_size=2, strides=2)
+  c2 = tf.layers.conv2d(p1, filters=nfil2,
+                          kernel_size=ksize2, strides=1,
+                          padding='same', activation=tf.nn.relu)
+  p2 = tf.layers.max_pooling2d(c2,pool_size=2, strides=2)
+
+  outlen = p2.shape[1]*p2.shape[2]*p2.shape[3]
+  p2flat = tf.reshape(p2, [-1, outlen]) # flattened
+
+  #apply batch normalization
+  if hparams['batch_norm']:
+    h3 = tf.layers.dense(p2flat, 300, activation=None)
+    h3 = tf.layers.batch_normalization(
+        h3, training=(mode == tf.estimator.ModeKeys.TRAIN)) #only batchnorm when training
+    h3 = tf.nn.relu(h3)
+  else:
+    h3 = tf.layers.dense(p2flat, 300, activation=tf.nn.relu)
+
+  #apply dropout
+  h3d = tf.layers.dropout(h3, rate=dprob, training=(mode == tf.estimator.ModeKeys.TRAIN))
+
+  ylogits = tf.layers.dense(h3d, NCLASSES, activation=None)
+
+  #apply batch normalization once more
+  if hparams['batch_norm']:
+     ylogits = tf.layers.batch_normalization(
+         ylogits, training=(mode == tf.estimator.ModeKeys.TRAIN))
+
+  return ylogits, NCLASSES
+
+def cnn_multi_block(prev_a,hparams):
+
+    return
+
+
+def cnn_multi_model(img, mode, hparams):
+  ksize11 = hparams.get('ksize11', 3)
+  ksize12 = hparams.get('ksize12', 3)
+  nfil11 = hparams.get('nfil11', 8)
+  nfil12 = hparams.get('nfil12', 16)
+
+  ksize21 = hparams.get('ksize21', 5)
+  ksize22 = hparams.get('ksize22', 5)
+  nfil21 = hparams.get('nfil21', 7)
+  nfil22 = hparams.get('nfil22', 14)
+
+  ksize31 = hparams.get('ksize31', 7)
+  ksize32 = hparams.get('ksize32', 7)
+  nfil31 = hparams.get('nfil31', 6)
+  nfil32 = hparams.get('nfil32', 12)
+
+  ksize4 = hparams.get('ksize4', 5)
+  ksize5 = hparams.get('ksize5', 5)
+  nfil4 = hparams.get('nfil4', 20)
+  nfil5 = hparams.get('nfil5', 40)
+
+  ksize_ = hparams.get('ksize_', 1)
+  nfil_ = hparams.get('nfil_', 20)
+
+  dprob = hparams.get('dprob', 0.25)
+  _, NCLASSES = work_out_labels(LABEL_CSV, hparams['key'])
+
+  c11 = tf.layers.conv2d(img, filters=nfil11,
+                          kernel_size=ksize11, strides=1,
+                          padding='same', activation=tf.nn.relu)
+  p11 = tf.layers.max_pooling2d(c11,pool_size=2, strides=2)
+  c12 = tf.layers.conv2d(p11, filters=nfil12,
+                          kernel_size=ksize12, strides=1,
+                          padding='same', activation=tf.nn.relu)
+  p12 = tf.layers.max_pooling2d(c12,pool_size=2, strides=2)
+
+  c21 = tf.layers.conv2d(img, filters=nfil21,
+                          kernel_size=ksize21, strides=1,
+                          padding='same', activation=tf.nn.relu)
+  p21 = tf.layers.max_pooling2d(c21,pool_size=2, strides=2)
+  c22 = tf.layers.conv2d(p21, filters=nfil22,
+                          kernel_size=ksize22, strides=1,
+                          padding='same', activation=tf.nn.relu)
+  p22 = tf.layers.max_pooling2d(c22,pool_size=2, strides=2)
+
+  c31 = tf.layers.conv2d(img, filters=nfil31,
+                          kernel_size=ksize31, strides=1,
+                          padding='same', activation=tf.nn.relu)
+  p31 = tf.layers.max_pooling2d(c31,pool_size=2, strides=2)
+  c32 = tf.layers.conv2d(p31, filters=nfil32,
+                          kernel_size=ksize32, strides=1,
+                          padding='same', activation=tf.nn.relu)
+  p32 = tf.layers.max_pooling2d(c32,pool_size=2, strides=2)
+
+  assert (p12.shape[3] == p22.shape[3] == p32.shape[3]), "Number of channels must be equal!"
+  concate1 = tf.concat([p12,p22,p32], axis=3)
+
+  c4 = tf.layers.conv2d(concate1, filters=nfil4,
+                          kernel_size=ksize4, strides=1,
+                          padding='same', activation=tf.nn.relu)
+  p4 = tf.layers.max_pooling2d(c4,pool_size=2, strides=2)
+  c5 = tf.layers.conv2d(p4, filters=nfil5,
+                          kernel_size=ksize5, strides=1,
+                          padding='same', activation=tf.nn.relu)
+  p5 = tf.layers.max_pooling2d(c5,pool_size=2, strides=2)
+
+  c_ = tf.layers.conv2d(img, filters=nfil_,
+                          kernel_size=ksize_, strides=1,
+                          padding='same', activation=tf.nn.relu)
+  p_ = tf.layers.max_pooling2d(c_,pool_size=16, strides=16)
+
+  assert (p5.shape[3] == p_.shape[3]), "Number of channels must be equal!"
+  concate2 = tf.concat([p5, p_], axis=3)
+
+  outlen = concate2.shape[1]*concate2.shape[2]*concate2.shape[3]
+  p2flat = tf.reshape(concate2, [-1, outlen]) # flattened
+
+  #apply batch normalization
+  if hparams['batch_norm']:
+    h3 = tf.layers.dense(p2flat, 200, activation=None)
+    h3 = tf.layers.batch_normalization(
+        h3, training=(mode == tf.estimator.ModeKeys.TRAIN)) #only batchnorm when training
+    h3 = tf.nn.relu(h3)
+  else:
+    h3 = tf.layers.dense(p2flat, 200, activation=tf.nn.relu)
+
+  #apply dropout
+  h3d = tf.layers.dropout(h3, rate=dprob, training=(mode == tf.estimator.ModeKeys.TRAIN))
+
+  ylogits = tf.layers.dense(h3d, NCLASSES, activation=None)
+
+  #apply batch normalization once more
+  if hparams['batch_norm']:
+     ylogits = tf.layers.batch_normalization(
+         ylogits, training=(mode == tf.estimator.ModeKeys.TRAIN))
+
+  return ylogits, NCLASSES
+
+TIMESERIES_COL = 'height'
+N_OUTPUTS = 1  # in each sequence, 1-49 are features, and 50 is label
+SEQ_LEN = None
+DEFAULTS = None
+N_INPUTS = None
+
+
+def init(hparams):
+    global SEQ_LEN, DEFAULTS, N_INPUTS
+    SEQ_LEN = hparams['sequence_length']
+    DEFAULTS = [[0.0] for x in range(0, SEQ_LEN)]
+    N_INPUTS = SEQ_LEN - N_OUTPUTS
+
+
+def linear_model(features, mode, params):
+    X = features[TIMESERIES_COL]
+    predictions = tf.layers.dense(X, 1, activation=None)
+    return predictions
+
+
+def dnn_model(features, mode, params):
+    X = features[TIMESERIES_COL]
+    h1 = tf.layers.dense(X, 10, activation=tf.nn.relu)
+    h2 = tf.layers.dense(h1, 3, activation=tf.nn.relu)
+    predictions = tf.layers.dense(h2, 1, activation=None)  # linear output: regression
+    return predictions
+
+
+def cnn_model(features, mode, params):
+    X = tf.reshape(features[TIMESERIES_COL],
+                   [-1, N_INPUTS, 1])  # as a 1D "sequence" with only one time-series observation (height)
+    c1 = tf.layers.conv1d(X, filters=N_INPUTS // 2,
+                          kernel_size=3, strides=1,
+                          padding='same', activation=tf.nn.relu)
+    p1 = tf.layers.max_pooling1d(c1, pool_size=2, strides=2)
+
+    c2 = tf.layers.conv1d(p1, filters=N_INPUTS // 2,
+                          kernel_size=3, strides=1,
+                          padding='same', activation=tf.nn.relu)
+    p2 = tf.layers.max_pooling1d(c2, pool_size=2, strides=2)
+
+    outlen = p2.shape[1] * p2.shape[2]
+    c2flat = tf.reshape(p2, [-1, outlen])
+    h1 = tf.layers.dense(c2flat, 3, activation=tf.nn.relu)
+    predictions = tf.layers.dense(h1, 1, activation=None)  # linear output: regression
+    return predictions
+
+
+def rnn_model(features, mode, params):
+    CELL_SIZE = N_INPUTS // 3  # size of the internal state in each of the cells
+
+    # 1. dynamic_rnn needs 3D shape: [BATCH_SIZE, N_INPUTS, 1]
+    x = tf.reshape(features[TIMESERIES_COL], [-1, N_INPUTS, 1])
+
+    # 2. configure the RNN
+    cell = tf.nn.rnn_cell.GRUCell(CELL_SIZE)
+    outputs, state = tf.nn.dynamic_rnn(cell, x, dtype=tf.float32)
+
+    # 3. pass rnn output through a dense layer
+    h1 = tf.layers.dense(state, N_INPUTS // 2, activation=tf.nn.relu)
+    predictions = tf.layers.dense(h1, 1, activation=None)  # (?, 1)
+    return predictions
+
+
+# 2-layer RNN
+def rnn2_model(features, mode, params):
+    # dynamic_rnn needs 3D shape: [BATCH_SIZE, N_INPUTS, 1]
+    x = tf.reshape(features[TIMESERIES_COL], [-1, N_INPUTS, 1])
+
+    # 2. configure the RNN
+    cell1 = tf.nn.rnn_cell.GRUCell(N_INPUTS * 2)
+    cell2 = tf.nn.rnn_cell.GRUCell(N_INPUTS // 2)
+    cells = tf.nn.rnn_cell.MultiRNNCell([cell1, cell2])
+    outputs, state = tf.nn.dynamic_rnn(cells, x, dtype=tf.float32)
+    # 'state' is now a tuple containing the final state of each cell layer
+    # we use state[1] below to extract the final state of the final layer
+
+    # 3. pass rnn output through a dense layer
+    h1 = tf.layers.dense(state[1], cells.output_size // 2, activation=tf.nn.relu)
+    predictions = tf.layers.dense(h1, 1, activation=None)  # (?, 1)
+    return predictions
+
+
+# create N-1 predictions
+def rnnN_model(features, mode, params):
+    # dynamic_rnn needs 3D shape: [BATCH_SIZE, N_INPUTS, 1]
+    x = tf.reshape(features[TIMESERIES_COL], [-1, N_INPUTS, 1])
+
+    # 2. configure the RNN
+    cell1 = tf.nn.rnn_cell.GRUCell(N_INPUTS * 2)
+    cell2 = tf.nn.rnn_cell.GRUCell(N_INPUTS // 2)
+    cells = tf.nn.rnn_cell.MultiRNNCell([cell1, cell2])
+    outputs, state = tf.nn.dynamic_rnn(cells, x, dtype=tf.float32)
+    # 'outputs' contains the state of the final layer for every time step
+    # not just the last time step (?,N_INPUTS, final cell size)
+
+    # 3. pass state for each time step through a DNN, to get a prediction
+    # for each time step
+    h1 = tf.layers.dense(outputs, cells.output_size, activation=tf.nn.relu)
+    h2 = tf.layers.dense(h1, cells.output_size // 2, activation=tf.nn.relu)
+    predictions = tf.layers.dense(h2, 1, activation=None)  # (?, N_INPUTS, 1)
+    predictions = tf.reshape(predictions, [-1, N_INPUTS])
+    return predictions # return prediction for each time step
+
+
+# read data and convert to needed format
+def read_dataset(filename, mode, batch_size=512):
+    def _input_fn():
+        def decode_csv(row):
+            # row is a string tensor containing the contents of one row
+            features = tf.decode_csv(row, record_defaults=DEFAULTS)  # string tensor -> list of 50 rank 0 float tensors
+            label = features.pop()  # remove last feature and use as label
+            features = tf.stack(features)  # list of rank 0 tensors -> single rank 1 tensor
+            return {TIMESERIES_COL: features}, label
+
+        # Create list of file names that match "glob" pattern (i.e. data_file_*.csv)
+        dataset = tf.data.Dataset.list_files(filename)
+        # Read in data from files
+        dataset = dataset.flat_map(tf.data.TextLineDataset)
+        # Parse text lines as comma-separated values (CSV)
+        dataset = dataset.map(decode_csv)
+
+        if mode == tf.estimator.ModeKeys.TRAIN:
+            num_epochs = None  # loop indefinitely
+            dataset = dataset.shuffle(buffer_size=10 * batch_size)
+        else:
+            num_epochs = 1  # end-of-input after this
+
+        dataset = dataset.repeat(num_epochs).batch(batch_size)
+        return dataset.make_one_shot_iterator().get_next()
+
+    return _input_fn
+
+
+def read_and_preprocess_with_augment(image_bytes, label=None):
+    return read_and_preprocess(image_bytes, label, augment=True)
+
+def read_and_preprocess(image_bytes, label=None, augment=False):
+    # decode the image
+    # end up with pixel values that are in the -1, 1 range
+    image = tf.image.decode_jpeg(image_bytes, channels=NUM_CHANNELS)
+    image = tf.image.convert_image_dtype(image, dtype=tf.float32) # 0-1
+    image = tf.expand_dims(image, 0) # resize_bilinear needs batches
+
+    if augment:
+       image = tf.image.resize_bilinear(
+           image, [HEIGHT+10, WIDTH+10], align_corners=False)
+       image = tf.squeeze(image) #remove batch dimension
+       image = tf.random_crop(image, [HEIGHT, WIDTH, NUM_CHANNELS])
+       image = tf.image.random_flip_left_right(image)
+       image = tf.image.random_brightness(image, max_delta=63.0/255.0)
+       image = tf.image.random_contrast(image, lower=0.2, upper=1.8)
+    else:
+       image = tf.image.resize_bilinear(image, [HEIGHT, WIDTH], align_corners=False)
+       image = tf.squeeze(image) #remove batch dimension
+
+    #pixel values are in range [0,1], convert to [-1,1]
+    image = tf.subtract(image, 0.5)
+    image = tf.multiply(image, 2.0)
+    return {'image':image}, label
+
+def serving_input_fn():
+    # Note: only handles one image at a time
+    feature_placeholders = {'image_bytes':
+                            tf.placeholder(tf.string, shape=())}
+    image, _ = read_and_preprocess(
+        tf.squeeze(feature_placeholders['image_bytes']))
+    image['image'] = tf.expand_dims(image['image'],0)
+    return tf.estimator.export.ServingInputReceiver(image, feature_placeholders)
+
+def make_input_fn(csv_of_filenames, batch_size, mode, augment=False):
+    def _input_fn():
+        def decode_csv(csv_row):
+            filename, label = tf.decode_csv(
+                csv_row, record_defaults = [[''],['']])
+            image_bytes = tf.read_file(filename)
+            return image_bytes, label
+
+        # Create tf.data.dataset from filename
+        dataset = tf.data.TextLineDataset(csv_of_filenames).map(decode_csv)
+
+        if augment:
+            dataset = dataset.map(read_and_preprocess_with_augment)
+        else:
+            dataset = dataset.map(read_and_preprocess)
+
+        if mode == tf.estimator.ModeKeys.TRAIN:
+            num_epochs = None # indefinitely
+            dataset = dataset.shuffle(buffer_size = 10 * batch_size)
+        else:
+            num_epochs = 1 # end-of-input after this
+
+        dataset = dataset.repeat(num_epochs).batch(batch_size)
+        return dataset.make_one_shot_iterator().get_next()
+    return _input_fn
+
+def image_classifier(features, labels, mode, params):
+  model_functions = {
+      'linear':linear_model,
+      'dnn':dnn_model,
+      'dnn_dropout':dnn_dropout_model,
+      'cnn':cnn_model,
+      'cnn_multi':cnn_multi_model}
+  LIST_OF_LABELS, _ = work_out_labels(LABEL_CSV, params['key'])
+  model_function = model_functions[params['model']]
+  ylogits, nclasses = model_function(features['image'], mode, params)
+
+  probabilities = tf.nn.softmax(ylogits)
+  class_int = tf.cast(tf.argmax(probabilities, 1), tf.uint8)
+  class_str = tf.gather(LIST_OF_LABELS, tf.cast(class_int, tf.int32))
+
+  if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
+    #convert string label to int
+    labels_table = tf.contrib.lookup.index_table_from_tensor(
+      tf.constant(LIST_OF_LABELS))
+    labels = labels_table.lookup(labels)
+
+    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(
+        logits=ylogits, labels=tf.one_hot(labels, nclasses)))
+    evalmetrics =  {'accuracy': tf.metrics.accuracy(class_int, labels)}
+    if mode == tf.estimator.ModeKeys.TRAIN:
+      # this is needed for batch normalization, but has no effect otherwise
+      update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+      with tf.control_dependencies(update_ops):
+         train_op = tf.contrib.layers.optimize_loss(
+             loss,
+             tf.train.get_global_step(),
+             learning_rate=params['learning_rate'],
+             optimizer="Adam")
+    else:
+      train_op = None
+  else:
+    loss = None
+    train_op = None
+    evalmetrics = None
+
+  return tf.estimator.EstimatorSpec(
+        mode=mode,
+        predictions={"probabilities": probabilities,
+                     "classid": class_int, "class": class_str},
+        loss=loss,
+        train_op=train_op,
+        eval_metric_ops=evalmetrics,
+        export_outputs={'classes': tf.estimator.export.PredictOutput(
+            {"probabilities": probabilities, "classid": class_int,
+             "class": class_str})}
+    )
+
+def train_and_evaluate(output_dir, hparams):
+  tf.summary.FileWriterCache.clear() # ensure filewriter cache is clear for TensorBoard events file
+  EVAL_INTERVAL = 300 #every 5 minutes
+  estimator = tf.estimator.Estimator(model_fn = image_classifier,
+                                     params = hparams,
+                                     config= tf.estimator.RunConfig(
+                                         save_checkpoints_secs = EVAL_INTERVAL,
+                                         keep_checkpoint_max = 10),
+                                     model_dir = output_dir)
+  train_spec = tf.estimator.TrainSpec(input_fn = make_input_fn(
+                                        hparams['data_path']+hparams['key']+'_train_set.csv',
+                                        hparams['batch_size'],
+                                        mode = tf.estimator.ModeKeys.TRAIN,
+                                        augment = hparams['augment']),
+                                      max_steps = hparams['train_steps'])
+  exporter = tf.estimator.LatestExporter('exporter', serving_input_fn)
+  eval_spec = tf.estimator.EvalSpec(input_fn = make_input_fn(
+                                        hparams['data_path']+hparams['key']+'_eval_set.csv',
+                                        hparams['batch_size'],
+                                        mode = tf.estimator.ModeKeys.EVAL),
+                                    steps = None,
+                                    exporters = exporter,
+                                    start_delay_secs = EVAL_INTERVAL,
+                                    throttle_secs = EVAL_INTERVAL)
+  tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
